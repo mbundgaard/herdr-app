@@ -62,7 +62,8 @@ commands. They're rewritten on every start to match this version.
 
 ## Seeing the window
 
-`herdr-app shot [file.png]` saves the last rendered window frame as a PNG
+`herdr-app shot [file.png] [space-id]` saves the last rendered main window
+(or detached space, when its ID is supplied) frame as a PNG
 and prints its absolute path (default: `herdr-shot.png` in your current
 folder). Use it when debugging mod UIs: inspect spacing, colors, terminal
 images, overlays, popups and floats. It captures the app, not the desktop,
@@ -553,6 +554,17 @@ The main ones:
   splits stay there; `spaces()` gives each space's `machine`, null here),
   `space.close {id?, confirmed?}`, `space.rename {id?, name}` ("": Herdr's name again),
   `space.move {id, index}`, `space.select {index | id}`, `space.next`, `space.prev`.
+  Owner fork: `space.popout {id?}` (or right-click → Open in new window) moves a
+  terminal space's existing tabs into a native window. `space.dock {id?}` or
+  closing that window returns it without ending terminals. Repeated popout/select
+  raises the detached window; `spaces()`/`ls` expose `detached`, and `status.popouts`
+  lists its ID. Detachment is process-local; reopening restores spaces in main.
+  `space.window {id, command, args?}` queues a supported local command; `queued`
+  acknowledges dispatch, not success. Inspect `ls` afterward. Native tabs support
+  selection/new tabs, terminal typing/copy/paste/search, split/resize/zoom; return
+  to main for other actions. Mod panes, stacks and floating blocks are rejected before
+  detaching; terminal-based agents are supported. Main layout chrome is not copied.
+  Closing main closes its child windows, leaving core terminals running.
   With no `argv`, the target core chooses that machine's default shell (PowerShell 7 when available on Windows).
 - Tabs: `tab.new {name?, space?, folder?, argv?, task?}` (argv: an
   agent to run, task: its first message). Agents run in your interactive

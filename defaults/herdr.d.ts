@@ -124,8 +124,10 @@ export interface SpaceInfo {
   machine: string | null;
   /** The git branch of the terminal it shows first, if any. */
   branch: string | null;
-  /** The shown space. */
+  /** The shown space in the main window. */
   active: boolean;
+  /** Owner fork: this space is displayed in its own native window in this process. */
+  detached: boolean;
   /** Most urgent agent status in it (blocked > done > working > idle), or null. */
   status: Status | null;
   tabs: TabInfo[];

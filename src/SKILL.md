@@ -26,6 +26,29 @@ Package-managed cores are checked but updated through their package manager.
 Dismiss a core update error with its × or `overlay.close {id:"core-update-error"}`;
 it stays dismissed until the error changes or the update recovers.
 
+## Space windows (owner fork)
+
+`space.popout {id?}` opens an existing terminal space in a movable native window
+with its complete tab bar, without creating or restarting terminals. Repeating
+it raises that window. Right-click a space → **Open in new window** does the same.
+`space.dock {id?}` and closing the pop-out return it to the main window; they do
+not close the space. `space.close` still ends terminals. `ls` includes `detached`;
+`status.popouts` lists detached space IDs, with sizes/errors in `popout_windows`.
+`herdr-app shot file.png space-id` captures that space's last native frame.
+Detachment is local to this desktop
+process, not saved into shared layouts; reopening the app restores spaces in main.
+Closing main closes all its desktop windows, not the core terminals.
+
+The current native tab strip supports switching/adding tabs, terminal typing,
+copy/paste/search, row/column splits, resizing and zoom. Mod panes, stacks and floating blocks are
+rejected before detaching (agent programs running in terminal panes work).
+Custom main-window chrome is not copied. Return the space for other actions.
+`space.window {id, command, args?}` queues one of these local commands, or
+`window.close`, in that space. A `queued` reply is not completion: inspect `ls`
+afterward; unsupported actions are shown as errors in the child window. Explicit
+IDs prevent a child action targeting a different space. Do not infer terminal
+restart or closure from a window closing.
+
 ## Show something when asked
 
 New spaces and tabs are shown immediately: only create them when asked.

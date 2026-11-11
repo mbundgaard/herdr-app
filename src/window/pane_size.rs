@@ -180,7 +180,10 @@ impl AppWindow {
         }
         let scale = window.scale_factor();
         let active = self.model.active_tab().map(|t| t.id.clone());
-        for tab in self.model.tabs().filter(|t| Some(&t.id) != active.as_ref()) {
+        // Each detached window sizes its own terminals; the main window must
+        // never resize those tabs to its context area's dimensions.
+        for tab in self.model.spaces.iter().filter(|s| !self.popouts.contains_key(&s.id))
+            .flat_map(|s| &s.tabs).filter(|t| Some(&t.id) != active.as_ref()) {
             for pane in tab.shown().panes() {
                 if let Some(t) = self.terms.get(&pane.id)
                     && let Some((cols, rows)) = self.shown_size(tab, &pane.id, window)

@@ -31,6 +31,9 @@ pub const COMMANDS: &[Command] = &[
     // What exists.
     cmd("space.new", &[opt("name"), opt("folder"), opt("tab"), opt("argv"), opt("task"), opt("machine")],
         "Make a space: its name (default: none, so it's called after where its first terminal is), the folder its terminals start in (default: the focused terminal's), its first tab's name (default: none, so it's called by its number), optionally an agent (argv) and its first message (task), and the machine it lives on (`hc machine ls`; default the focused space's machine for keys and clicks, this computer for scripts; empty string: this computer; its terminals start in that machine's home unless folder)."),
+    cmd("space.popout", &[opt("id")], "Open a terminal space in a native window, with its existing tabs and terminals. Repeated calls raise that window. Mod panes/floating blocks must stay in the main window for now."),
+    cmd("space.dock", &[opt("id")], "Return a detached space to the main window without ending or restarting terminals. Closing its native window does the same."),
+    cmd("space.window", &[req("id"), req("command"), opt("args")], "Queue a supported command in a detached space window (id, command, args object). The reply acknowledges queueing, not completion; inspect ls/status afterward. Unsupported actions appear as an error in that window."),
     cmd("space.close", &[opt("id"), opt("confirmed")], "Close a space and end its terminals (asks first unless confirmed)."),
     cmd("space.rename", &[opt("id"), opt("name")], "Rename a space (asks the person when no name; an empty name: called after where its first terminal is again)."),
     cmd("space.move", &[req("id"), req("index")], "Move a space to a position (1 = first)."),

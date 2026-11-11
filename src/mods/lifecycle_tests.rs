@@ -223,7 +223,7 @@ export default class extends View {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let calls = seen.clone();
     gpui_shell::policy::set_default(Policy::new()
-        .with_host_module(module(Instance { name: "test".into(), props: Value::Null }, 0)).unwrap()
+        .with_host_module(module(Instance { name: "test".into(), props: Value::Null }, 0, WindowSnapshot::default())).unwrap()
         .with_host_module(HostModule::new("fixture").function("note", move |a| {
             calls.borrow_mut().push(a.string(0)?.to_owned());
             Ok(HostValue::Null)
@@ -235,6 +235,61 @@ export default class extends View {
     assert_eq!(seen.len(), 2);
     assert!(seen[0].contains("space.close: unknown argument(s): space; valid arguments: id, confirmed"), "{}", seen[0]);
     assert!(seen[1].contains("terminal.kill: unknown argument(s): id; valid arguments: terminal"), "{}", seen[1]);
+}
+
+#[gpui::test]
+fn mod_callbacks_in_two_windows_read_their_owners_snapshot(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let fixture = Fixture::new(r#"
+import { View, div } from "gpui-kit";
+import { focused, nextCommand } from "herdr";
+import { note } from "fixture";
+export default class extends View {
+  init(_, cx) {
+    cx.spawn(async () => {
+      for (;;) {
+        await nextCommand();
+        note(focused().space);
+      }
+    });
+  }
+  render() { return div(); }
+}"#);
+    let notes = Rc::new(RefCell::new(Vec::new()));
+    let main = WindowSnapshot::default();
+    let detached = WindowSnapshot::default();
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let mut windows = Vec::new();
+    for (copy, snapshot) in [(81, main.clone()), (82, detached.clone())] {
+        let calls = notes.clone();
+        gpui_shell::policy::set_default(Policy::new()
+            .with_host_module(module(Instance { name: "snapshot-test".into(), props: Value::Null }, copy, snapshot)).unwrap()
+            .with_host_module(HostModule::new("fixture").function("note", move |a| {
+                calls.borrow_mut().push((copy, a.string(0)?.to_owned()));
+                Ok(HostValue::Null)
+            })).unwrap());
+        windows.push(cx.add_window(|window, cx| Mounted(runtime.try_load(&fixture.0, window, cx).unwrap())));
+    }
+    let mut visual = VisualTestContext::from_window(*windows[0].deref(), cx);
+    visual.run_until_parked();
+    set_shown_copies([81, 82].into());
+    // Publish in the opposite order from the callbacks, after both modules load.
+    detached.publish_focused(json!({"space":"detached"}));
+    main.publish_focused(json!({"space":"main"}));
+    assert!(send_command_to(82, "read"));
+    visual.run_until_parked();
+    assert!(send_command_to(81, "read"));
+    visual.run_until_parked();
+    detached.publish_focused(json!({"space":"changed"}));
+    assert!(send_command_to(81, "read"));
+    visual.run_until_parked();
+    assert!(send_command_to(82, "read"));
+    visual.run_until_parked();
+    assert_eq!(*notes.borrow(), vec![
+        (82, "detached".into()), (81, "main".into()),
+        (81, "main".into()), (82, "changed".into()),
+    ]);
+    set_shown_copies(Default::default());
 }
 
 #[gpui::test]
@@ -263,7 +318,7 @@ export default class extends View {
     let notes = Rc::new(RefCell::new(Vec::new()));
     let calls = notes.clone();
     gpui_shell::policy::set_default(Policy::new()
-        .with_host_module(module(Instance { name: "focus-test".into(), props: Value::Null }, 42)).unwrap()
+        .with_host_module(module(Instance { name: "focus-test".into(), props: Value::Null }, 42, WindowSnapshot::default())).unwrap()
         .with_host_module(HostModule::new("fixture").function("note", move |a| {
             calls.borrow_mut().push(a.string(0)?.to_owned());
             Ok(HostValue::Null)

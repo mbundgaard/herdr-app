@@ -198,6 +198,7 @@ impl AppWindow {
     pub(super) fn window_command(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         match name {
             "window.close" => {
+                self.close_space_windows(cx);
                 self.drain_documents(window, cx);
                 self.close_mods_now(std::time::Instant::now() + Duration::from_millis(250), window, cx);
                 crate::place::save(window, cx);

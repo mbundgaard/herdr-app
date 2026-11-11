@@ -30,6 +30,32 @@ Make a space: its name (default: none, so it's called after where its first term
 | `task` | no |
 | `machine` | no |
 
+## `space.popout`
+
+Open a terminal space in a native window, with its existing tabs and terminals. Repeated calls raise that window. Mod panes/floating blocks must stay in the main window for now.
+
+| Argument | Required |
+|---|---|
+| `id` | no |
+
+## `space.dock`
+
+Return a detached space to the main window without ending or restarting terminals. Closing its native window does the same.
+
+| Argument | Required |
+|---|---|
+| `id` | no |
+
+## `space.window`
+
+Queue a supported command in a detached space window (id, command, args object). The reply acknowledges queueing, not completion; inspect ls/status afterward. Unsupported actions appear as an error in that window.
+
+| Argument | Required |
+|---|---|
+| `id` | yes |
+| `command` | yes |
+| `args` | no |
+
 ## `space.close`
 
 Close a space and end its terminals (asks first unless confirmed).

@@ -6,6 +6,18 @@ maintains it.
 
 If AGENTS.local.md exists, read it too: the maintainer's local rules.
 
+## Owner fork: space pop-out development
+
+This checkout is the owner's `mbundgaard/herdr-app` fork. The owner has
+explicitly authorized independent desktop-only space pop-out development;
+Can's approval is not a prerequisite for this fork-only work. Keep the
+architectural questions below, but use the owner's approval for this scope.
+Do not open upstream issues/PRs or plan an upstream merge unless asked.
+Leave herdr-core source, installed binaries, and existing core sessions alone.
+Keep the working desktop running while developing; use a separate build
+output directory and disposable app/core state for tests. The upstream
+contribution/release rules below apply only when contributing upstream.
+
 ## Compatibility
 
 Preserve compatibility with released versions and installed user data.

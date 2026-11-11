@@ -270,7 +270,7 @@ impl AppWindow {
             d.target = snap(f32::from(cx_), f32::from(cy_), f32::from(ob.size.width), f32::from(ob.size.height));
         }
         drop(bounds);
-        if mods::publish_floats(self.float_placements()) {
+        if self.mod_snapshot.publish_floats(self.float_placements()) {
             self.refresh_mods(cx);
         }
         cx.notify();
@@ -301,7 +301,7 @@ impl AppWindow {
             self.float_anims.insert(d.id, a);
         }
         self.save();
-        if mods::publish_floats(self.float_placements()) {
+        if self.mod_snapshot.publish_floats(self.float_placements()) {
             self.refresh_mods(cx);
         }
         cx.notify();
@@ -348,7 +348,7 @@ impl AppWindow {
         let seq = self.float_leave.entry(id.to_owned()).or_default();
         *seq += 1;
         if hovered {
-            if self.float_hover.insert(id.to_owned()) && mods::publish_floats(self.float_placements()) {
+            if self.float_hover.insert(id.to_owned()) && self.mod_snapshot.publish_floats(self.float_placements()) {
                 self.refresh_mods(cx);
             }
             cx.notify();
@@ -359,7 +359,7 @@ impl AppWindow {
             cx.background_executor().timer(Duration::from_millis(LEAVE_MS)).await;
             let _ = this.update(cx, |this, cx| {
                 if this.float_leave.get(&id) == Some(&mine) && this.float_hover.remove(&id) {
-                    if mods::publish_floats(this.float_placements()) {
+                    if this.mod_snapshot.publish_floats(this.float_placements()) {
                         this.refresh_mods(cx);
                     }
                     cx.notify();

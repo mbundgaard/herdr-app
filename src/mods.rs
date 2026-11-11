@@ -540,9 +540,8 @@ pub fn request(r: Request) {
 }
 
 thread_local! {
-    /// Snapshots the window publishes; mods read them synchronously and
-    /// re-render when they change.
-    static SNAPSHOT: RefCell<Snapshot> = RefCell::new(Snapshot::default());
+    /// App-wide terminal address lookup for links, not a window's mod view.
+    static TERMINALS: RefCell<Value> = RefCell::new(json!([]));
     static AGENT_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static SHARED: RefCell<Option<SharedStore>> = const { RefCell::new(None) };
     /// Where key commands for each loaded copy go: (copy, mod, sender).
@@ -551,7 +550,6 @@ thread_local! {
     /// not act on the person's keys).
     static SHOWN_COPIES: RefCell<std::collections::HashSet<u64>> = RefCell::new(std::collections::HashSet::new());
     static LIVE_READS: RefCell<HashMap<u64, Weak<RefCell<LiveReads>>>> = RefCell::new(HashMap::new());
-    static REVISIONS: RefCell<HashMap<&'static str, u64>> = RefCell::new(HashMap::new());
     static COPY_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static OVERLAY_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
@@ -578,66 +576,81 @@ impl Default for Snapshot {
     }
 }
 
-/// Replaces one part of the snapshot; returns whether it changed.
-fn publish(key: &'static str, set: impl FnOnce(&mut Snapshot) -> (Value, Value)) -> bool {
-    let changed = SNAPSHOT.with(|s| {
-        let (old, new) = set(&mut s.borrow_mut());
-        old != new
-    });
-    if changed {
-        REVISIONS.with_borrow_mut(|r| *r.entry(key).or_default() += 1);
-    }
-    changed
+/// A window's published view. Each loaded mod captures its owner's handle;
+/// callbacks and delayed renders never read whichever window published last.
+#[derive(Clone, Default)]
+pub struct WindowSnapshot(Rc<RefCell<SnapshotState>>);
+
+#[derive(Default)]
+struct SnapshotState {
+    value: Snapshot,
+    revisions: HashMap<&'static str, u64>,
 }
 
-pub fn publish_layout(layout: &Node) -> bool {
-    let v = serde_json::to_value(layout).unwrap_or(Value::Null);
-    publish("layout", |s| (std::mem::replace(&mut s.layout, v.clone()), v))
+impl WindowSnapshot {
+    /// Replaces one part of this window's snapshot; returns whether it changed.
+    fn publish(&self, key: &'static str, set: impl FnOnce(&mut Snapshot) -> (Value, Value)) -> bool {
+        let mut state = self.0.borrow_mut();
+        let (old, new) = set(&mut state.value);
+        let changed = old != new;
+        if changed {
+            *state.revisions.entry(key).or_default() += 1;
+        }
+        changed
+    }
+
+    pub fn publish_layout(&self, layout: &Node) -> bool {
+        let v = serde_json::to_value(layout).unwrap_or(Value::Null);
+        self.publish("layout", |s| (std::mem::replace(&mut s.layout, v.clone()), v))
+    }
+    pub fn publish_machines(&self, v: Value) -> bool {
+        self.publish("machines", |s| (std::mem::replace(&mut s.machines, v.clone()), v))
+    }
+    pub fn publish_spaces(&self, v: Value) -> bool {
+        self.publish("spaces", |s| (std::mem::replace(&mut s.spaces, v.clone()), v))
+    }
+    pub fn publish_agents(&self, v: Value) -> bool {
+        self.publish("agents", |s| (std::mem::replace(&mut s.agents, v.clone()), v))
+    }
+    pub fn publish_panes(&self, v: Value) -> bool {
+        self.publish("panes", |s| (std::mem::replace(&mut s.panes, v.clone()), v))
+    }
+    pub fn publish_terminals(&self, v: Value) -> bool {
+        // Link resolution is app-wide; window-local selection is not involved.
+        TERMINALS.with_borrow_mut(|live| *live = v.clone());
+        self.publish("terminals", |s| (std::mem::replace(&mut s.terminals, v.clone()), v))
+    }
+    pub fn publish_floats(&self, v: Value) -> bool {
+        self.publish("floats", |s| (std::mem::replace(&mut s.floats, v.clone()), v))
+    }
+    pub fn publish_window(&self, v: Value) -> bool {
+        self.publish("window", |s| (std::mem::replace(&mut s.window, v.clone()), v))
+    }
+    pub fn publish_focused(&self, v: Value) -> bool {
+        self.publish("focused", |s| (std::mem::replace(&mut s.focused, v.clone()), v))
+    }
 }
-pub fn publish_machines(v: Value) -> bool {
-    publish("machines", |s| (std::mem::replace(&mut s.machines, v.clone()), v))
-}
-pub fn publish_spaces(v: Value) -> bool {
-    publish("spaces", |s| (std::mem::replace(&mut s.spaces, v.clone()), v))
-}
-pub fn publish_agents(v: Value) -> bool {
-    publish("agents", |s| (std::mem::replace(&mut s.agents, v.clone()), v))
-}
-pub fn publish_panes(v: Value) -> bool {
-    publish("panes", |s| (std::mem::replace(&mut s.panes, v.clone()), v))
-}
-pub fn publish_terminals(v: Value) -> bool {
-    publish("terminals", |s| (std::mem::replace(&mut s.terminals, v.clone()), v))
-}
+
 pub fn terminal_address(word: &str, source: &str) -> Option<String> {
-    SNAPSHOT.with(|s| {
-        let s = s.borrow();
-        let live = s.terminals.as_array()?;
-        crate::links::terminal_address(word, source, live.iter().filter_map(|t| t["address"].as_str()))
+    TERMINALS.with_borrow(|live| {
+        crate::links::terminal_address(word, source, live.as_array()?.iter().filter_map(|t| t["address"].as_str()))
     })
 }
 
-pub fn publish_floats(v: Value) -> bool {
-    publish("floats", |s| (std::mem::replace(&mut s.floats, v.clone()), v))
-}
-pub fn publish_window(v: Value) -> bool {
-    publish("window", |s| (std::mem::replace(&mut s.window, v.clone()), v))
-}
-pub fn publish_focused(v: Value) -> bool {
-    publish("focused", |s| (std::mem::replace(&mut s.focused, v.clone()), v))
-}
-
 #[derive(Default)]
-struct LiveReads(HashMap<&'static str, u64>);
+struct LiveReads {
+    seen: HashMap<&'static str, u64>,
+    snapshot: WindowSnapshot,
+}
 
 impl LiveReads {
     fn record(&mut self, key: &'static str, revisions: &HashMap<&'static str, u64>) {
-        self.0.entry(key).or_insert_with(|| revisions.get(key).copied().unwrap_or(0));
+        self.seen.entry(key).or_insert_with(|| revisions.get(key).copied().unwrap_or(0));
     }
 
     fn changed(&mut self, revisions: &HashMap<&'static str, u64>) -> bool {
         let mut changed = false;
-        for (key, seen) in &mut self.0 {
+        for (key, seen) in &mut self.seen {
             let revision = revisions.get(key).copied().unwrap_or(0);
             changed |= *seen != revision;
             *seen = revision;
@@ -647,8 +660,11 @@ impl LiveReads {
 }
 
 fn read(reads: &RefCell<LiveReads>, key: &'static str, f: impl FnOnce(&Snapshot) -> &Value) -> HostValue {
-    REVISIONS.with_borrow(|r| reads.borrow_mut().record(key, r));
-    SNAPSHOT.with(|s| to_host(f(&s.borrow())))
+    let mut reads = reads.borrow_mut();
+    let snapshot = reads.snapshot.clone();
+    let state = snapshot.0.borrow();
+    reads.record(key, &state.revisions);
+    to_host(f(&state.value))
 }
 
 fn reader(reads: Rc<RefCell<LiveReads>>, key: &'static str, f: fn(&Snapshot) -> &Value) -> impl Fn(&gpui_shell::HostArguments) -> gpui_shell::HostResult {
@@ -659,7 +675,8 @@ fn reader(reads: Rc<RefCell<LiveReads>>, key: &'static str, f: fn(&Snapshot) -> 
 pub fn snapshot_changed(copy: u64) -> bool {
     LIVE_READS.with_borrow(|copies| {
         copies.get(&copy).and_then(Weak::upgrade).is_some_and(|reads| {
-            REVISIONS.with_borrow(|r| reads.borrow_mut().changed(r))
+            let snapshot = reads.borrow().snapshot.clone();
+            reads.borrow_mut().changed(&snapshot.0.borrow().revisions)
         })
     })
 }
@@ -890,8 +907,8 @@ fn exec_future(command: String, args: Vec<String>, cwd: Option<String>, on: Opti
     }
 }
 
-fn module(inst: Instance, copy: u64) -> HostModule {
-    let reads = Rc::new(RefCell::new(LiveReads::default()));
+fn module(inst: Instance, copy: u64, snapshot: WindowSnapshot) -> HostModule {
+    let reads = Rc::new(RefCell::new(LiveReads { snapshot, ..Default::default() }));
     LIVE_READS.with_borrow_mut(|copies| {
         copies.retain(|_, reads| reads.strong_count() > 0);
         copies.insert(copy, Rc::downgrade(&reads));
@@ -1159,7 +1176,7 @@ pub fn install_check_policy() {
 pub fn install_policy() -> async_channel::Receiver<Request> {
     gpui_shell::policy::update_default(|p| {
         p.with_capabilities(capabilities())
-            .with_host_module(module(Instance { name: String::new(), props: Value::Null }, 0))
+            .with_host_module(module(Instance { name: String::new(), props: Value::Null }, 0, WindowSnapshot::default()))
             .expect("herdr module is valid")
     });
     let (tx, rx) = async_channel::unbounded();
@@ -1172,7 +1189,7 @@ pub fn install_policy() -> async_channel::Receiver<Request> {
 /// view a copy of the default that *shares* modules and storage, so each copy
 /// needs a fresh default rather than an edit of the old one.
 /// Readies the next load of `inst`; returns the copy's number (for commands).
-pub fn prepare_load(inst: &Instance) -> u64 {
+pub fn prepare_load(inst: &Instance, snapshot: &WindowSnapshot) -> u64 {
     let copy = COPY_SEQ.with(|s| {
         s.set(s.get() + 1);
         s.get()
@@ -1191,7 +1208,7 @@ pub fn prepare_load(inst: &Instance) -> u64 {
         .with_application(inst.key())
         .with_capabilities(capabilities())
         .with_storage_path(dir.join(file))
-        .with_host_module(module(inst.clone(), copy))
+        .with_host_module(module(inst.clone(), copy, snapshot.clone()))
         .expect("herdr module is valid");
     gpui_shell::policy::set_default(policy);
     copy
@@ -1261,18 +1278,19 @@ mod tests {
     #[test]
     fn equal_snapshots_do_not_refresh_readers() {
         std::thread::spawn(|| {
-            let reads = Rc::new(RefCell::new(LiveReads::default()));
+            let snapshot = WindowSnapshot::default();
+            let reads = Rc::new(RefCell::new(LiveReads { snapshot: snapshot.clone(), ..Default::default() }));
             LIVE_READS.with_borrow_mut(|copies| { copies.insert(1, Rc::downgrade(&reads)); });
             read(&reads, "agents", |s| &s.agents);
             assert!(!snapshot_changed(1));
-            assert!(!publish_agents(json!([])));
+            assert!(!snapshot.publish_agents(json!([])));
             assert!(!snapshot_changed(1));
-            assert!(publish_terminals(json!([{"address":"t1"}])));
+            assert!(snapshot.publish_terminals(json!([{"address":"t1"}])));
             assert!(!snapshot_changed(1));
-            assert!(publish_agents(json!([{"address":"t1","status":"working"}])));
+            assert!(snapshot.publish_agents(json!([{"address":"t1","status":"working"}])));
             assert!(snapshot_changed(1));
             assert!(!snapshot_changed(1));
-            assert!(!publish_agents(json!([{"address":"t1","status":"working"}])));
+            assert!(!snapshot.publish_agents(json!([{"address":"t1","status":"working"}])));
             assert!(!snapshot_changed(1));
             drop(reads);
             assert!(!snapshot_changed(1));
@@ -1280,16 +1298,80 @@ mod tests {
     }
 
     #[test]
+    fn window_snapshots_keep_focus_and_invalidation_with_the_owner() {
+        std::thread::spawn(|| {
+            let main = WindowSnapshot::default();
+            let detached = WindowSnapshot::default();
+            let main_reads = Rc::new(RefCell::new(LiveReads { snapshot: main.clone(), ..Default::default() }));
+            let detached_reads = Rc::new(RefCell::new(LiveReads { snapshot: detached.clone(), ..Default::default() }));
+            LIVE_READS.with_borrow_mut(|copies| {
+                copies.insert(1, Rc::downgrade(&main_reads));
+                copies.insert(2, Rc::downgrade(&detached_reads));
+            });
+            main.publish_focused(json!({"space":"main", "tab":"a"}));
+            detached.publish_focused(json!({"space":"detached", "tab":"b"}));
+            assert_eq!(from_host(&read(&main_reads, "focused", |s| &s.focused)), json!({"space":"main", "tab":"a"}));
+            assert_eq!(from_host(&read(&detached_reads, "focused", |s| &s.focused)), json!({"space":"detached", "tab":"b"}));
+            assert!(!snapshot_changed(1));
+            assert!(!snapshot_changed(2));
+
+            detached.publish_focused(json!({"space":"detached", "tab":"c"}));
+            assert!(!snapshot_changed(1));
+            // A callback before the render reads its own newest value without
+            // consuming the pending invalidation (nor seeing the main window).
+            assert_eq!(from_host(&read(&detached_reads, "focused", |s| &s.focused)), json!({"space":"detached", "tab":"c"}));
+            assert!(snapshot_changed(2));
+            assert!(!snapshot_changed(2));
+            main.publish_focused(json!({"space":"main", "tab":"d"}));
+            assert!(snapshot_changed(1));
+            assert!(!snapshot_changed(2));
+            drop(detached_reads);
+            assert!(!snapshot_changed(2));
+        }).join().unwrap();
+    }
+
+    #[test]
+    fn window_snapshot_clones_share_only_their_own_view() {
+        let main = WindowSnapshot::default();
+        let callback = main.clone();
+        let other = WindowSnapshot::default();
+        main.publish_spaces(json!([{"id":"a", "active":true}]));
+        other.publish_spaces(json!([{"id":"b", "active":true}]));
+        main.publish_window(json!({"active":true}));
+        other.publish_window(json!({"active":false}));
+        main.publish_floats(json!({"tools":{"hovered":true}}));
+        other.publish_floats(json!({"tools":{"hovered":false}}));
+        // A mod can outlive the publisher while its close callback runs.
+        drop(main);
+        let reads = RefCell::new(LiveReads { snapshot: callback, ..Default::default() });
+        assert_eq!(from_host(&read(&reads, "spaces", |s| &s.spaces)), json!([{"id":"a", "active":true}]));
+        assert_eq!(from_host(&read(&reads, "window", |s| &s.window)), json!({"active":true}));
+        assert_eq!(from_host(&read(&reads, "floats", |s| &s.floats)), json!({"tools":{"hovered":true}}));
+    }
+
+    #[test]
+    fn terminal_links_still_use_the_app_wide_live_addresses() {
+        std::thread::spawn(|| {
+            let snapshot = WindowSnapshot::default();
+            snapshot.publish_terminals(json!([{"address":"t1"}, {"address":"box/t2"}]));
+            assert_eq!(terminal_address("t1", "t3"), Some("t1".into()));
+            assert_eq!(terminal_address("box/t2", "t3"), Some("box/t2".into()));
+            snapshot.publish_terminals(json!([]));
+            assert_eq!(terminal_address("t1", "t3"), None);
+        }).join().unwrap();
+    }
+
+    #[test]
     fn loading_copies_reclaims_closed_command_channels_without_dispatch() {
         std::thread::spawn(|| {
             let inst = Instance { name: "test".into(), props: Value::Null };
-            let live = module(inst.clone(), 1);
+            let live = module(inst.clone(), 1, WindowSnapshot::default());
             for copy in 2..102 {
-                drop(module(inst.clone(), copy));
+                drop(module(inst.clone(), copy, WindowSnapshot::default()));
                 COMMANDS.with_borrow(|commands| assert!(commands.len() <= 2));
             }
             drop(live);
-            let last = module(inst, 102);
+            let last = module(inst, 102, WindowSnapshot::default());
             COMMANDS.with_borrow(|commands| assert_eq!(commands.len(), 1));
             drop(last);
         }).join().unwrap();

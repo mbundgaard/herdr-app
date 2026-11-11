@@ -9,6 +9,7 @@ mod floats;
 mod movable;
 mod pane_drag;
 mod pane_size;
+mod popout;
 mod titlebar;
 
 use crate::layout::{Axis, Background as Paint, Content, Fit, HeaderContent, Kind, Line, Node, PaneFrame, Size as Span};
@@ -347,6 +348,10 @@ struct Watched {
 pub struct AppWindow {
     core: Arc<Core>,
     runtime: Option<Rc<ShellRuntime>>,
+    mod_snapshot: mods::WindowSnapshot,
+    popouts: HashMap<String, WindowHandle<popout::SpaceWindow>>,
+    popout_active: HashSet<String>,
+    popout_command: bool,
     chrome: Node,
     /// Which layout `chrome` is (`layouts/<name>.json`).
     layout_name: String,
@@ -472,6 +477,10 @@ impl AppWindow {
         let mut w = AppWindow {
             core,
             runtime,
+            mod_snapshot: mods::WindowSnapshot::default(),
+            popouts: HashMap::new(),
+            popout_active: HashSet::new(),
+            popout_command: false,
             chrome: default_layout("main"),
             layout_name: "main".into(),
             agent: None,
@@ -564,6 +573,7 @@ impl AppWindow {
                 return false;
             }
             let _ = closing.update(cx, |this, cx| {
+                this.close_space_windows(cx);
                 this.drain_documents(window, cx);
                 this.close_mods_now(std::time::Instant::now() + Duration::from_millis(250), window, cx);
             });
@@ -1346,9 +1356,9 @@ impl AppWindow {
         let focused = self.model.focused_pane().and_then(|p| self.model.address_of(&p));
         self.agent
             .clone()
-            .filter(|a| self.live.contains_key(a))
-            .or_else(|| focused.filter(|a| self.model.status(a).is_some()))
-            .or_else(|| self.agent_order().into_iter().next())
+            .filter(|a| self.live.contains_key(a) && !self.address_detached(a))
+            .or_else(|| focused.filter(|a| self.model.status(a).is_some() && !self.address_detached(a)))
+            .or_else(|| self.agent_order().into_iter().find(|a| !self.address_detached(a)))
     }
 
     /// The terminal view showing `addr` in an agent block: its pane's, or the block's own.
@@ -1392,6 +1402,11 @@ impl AppWindow {
 
     /// Creates what's visible, drops what isn't, publishes state, saves, focuses.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.popout_command { return; }
+        self.reconcile_space_windows(cx);
+        if self.model.active.as_ref().is_some_and(|id| self.popouts.contains_key(id)) {
+            self.model.active = self.model.spaces.iter().find(|s| !self.popouts.contains_key(&s.id)).map(|s| s.id.clone());
+        }
         self.model.order_spaces();
         let (model, live) = (&self.model, &self.live);
         self.swapped.retain(|p, a| model.address_of(p).is_some() && live.contains_key(a));
@@ -1404,6 +1419,11 @@ impl AppWindow {
             && let Some(pane) = self.model.pane_of(&addr)
         {
             displayed.insert(pane);
+        }
+        for space in self.model.spaces.iter().filter(|s| self.popouts.contains_key(&s.id)) {
+            if let Some(tab) = space.active_tab() {
+                displayed.extend(tab.shown().terminals().iter().map(|n| n.id.clone()));
+            }
         }
         for (id, t) in &self.terms {
             if !displayed.contains(id) {
@@ -1437,6 +1457,7 @@ impl AppWindow {
                 TerminalEvent::TitleChanged => this.publish(cx),
                 TerminalEvent::Ended => this.terminal_ended(&block, window, cx),
                 TerminalEvent::ContextMenu(at) => {
+                    if this.popout_menu(&block, *at, cx) { return; }
                     this.open_menu("pane", json!({ "pane": block.trim_end_matches(SWAP), "terminal": addr }), Some(*at), window, cx)
                 }
             });
@@ -1538,7 +1559,7 @@ impl AppWindow {
     /// there, so a phone marking it unread isn't undone by a screen nobody
     /// watches. Only ever raises it. True when a status changed.
     fn share_seen(&mut self, cx: &mut Context<Self>) -> bool {
-        let looking: HashSet<String> = if self.window_active { self.visible_addresses().into_iter().collect() } else { HashSet::new() };
+        let looking = self.looking_addresses();
         self.looked.retain(|a, _| looking.contains(a));
         let mut changed = false;
         for addr in looking {
@@ -1668,7 +1689,7 @@ impl AppWindow {
             copy.error = Some(format!("no mod folder ~/.config/herdr-app/mods/{}", copy.inst.name));
             return copy;
         };
-        copy.id = mods::prepare_load(&copy.inst);
+        copy.id = mods::prepare_load(&copy.inst, &self.mod_snapshot);
         match runtime.try_load(&folder.dir, window, cx) {
             Ok(root) => {
                 if self.file_events.is_none() {
@@ -1722,7 +1743,9 @@ impl AppWindow {
                 // The branch of the terminal the space shows first.
                 let first = p.active_tab().and_then(|c| c.focused_pane()).and_then(|pane| m.address_of(&pane));
                 let branch = first.and_then(|a| m.folder_info.get(&a)).and_then(|f| f.branch.clone());
-                model::space_json(m, p, i, branch.as_deref(), &home)
+                let mut value = model::space_json(m, p, i, branch.as_deref(), &home);
+                value["detached"] = json!(self.popouts.contains_key(&p.id));
+                value
             })
             .collect();
         // A window's terminal with the keyboard first, then a layout terminal block.
@@ -1779,13 +1802,13 @@ impl AppWindow {
         let machines = self.documents.iter().map(|(name, slot)| json!({
             "name": (!name.is_empty()).then_some(name), "layout": slot.layout(),
         })).collect();
-        let mut changed = mods::publish_machines(Value::Array(machines));
-        changed |= mods::publish_spaces(Value::Array(spaces));
-        changed |= mods::publish_agents(Value::Array(agents));
-        changed |= mods::publish_panes(Value::Array(panes));
-        changed |= mods::publish_focused(focused.unwrap_or(Value::Null));
-        changed |= mods::publish_floats(self.float_placements());
-        changed |= mods::publish_layout(&self.chrome);
+        let mut changed = self.mod_snapshot.publish_machines(Value::Array(machines));
+        changed |= self.mod_snapshot.publish_spaces(Value::Array(spaces));
+        changed |= self.mod_snapshot.publish_agents(Value::Array(agents));
+        changed |= self.mod_snapshot.publish_panes(Value::Array(panes));
+        changed |= self.mod_snapshot.publish_focused(focused.unwrap_or(Value::Null));
+        changed |= self.mod_snapshot.publish_floats(self.float_placements());
+        changed |= self.mod_snapshot.publish_layout(&self.chrome);
         if changed {
             self.refresh_snapshot_mods(cx);
         }
@@ -1847,7 +1870,9 @@ impl AppWindow {
     }
 
     fn flush_documents(&mut self, refresh: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.draining || !self.documents_watching { return; }
+        // A child command mutates the shared model, but document continuations
+        // must remain attached to the authoritative main window.
+        if self.popout_command || self.draining || !self.documents_watching { return; }
         let generation = self.core_generation;
         for (machine, slot) in &mut self.documents {
             slot.dirty |= refresh;
@@ -2045,7 +2070,7 @@ impl AppWindow {
         self.live = live;
         self.closing_terminals.retain(|addr, completed| !*completed || self.live.contains_key(addr));
         // A new sub-agent changes only this list; mods that show teams need to redraw.
-        let terminals_changed = mods::publish_terminals(list);
+        let terminals_changed = self.mod_snapshot.publish_terminals(list);
         self.tend_terminals(true, window, cx);
         if terminals_changed {
             self.refresh_snapshot_mods(cx);
@@ -2060,12 +2085,12 @@ impl AppWindow {
         // Place newly labeled terminals first: one that is blocked on its first
         // listing is ours, and must ring.
         let mut changed = self.reconcile(window, cx);
-        let visible: HashSet<String> = self.visible_addresses().into_iter().collect();
+        let visible = self.looking_addresses();
         let mut alerts = Vec::new();
         for (addr, rec) in &self.live {
             let word = rec.get("status").and_then(Value::as_str).map(str::to_owned);
             let app = rec.get("report").and_then(|r| r.get("app")).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
-            let looking = visible.contains(addr) && self.window_active;
+            let looking = visible.contains(addr);
             let prev = self.model.agents.get(addr).and_then(|a| a.word.clone());
             let child = rec.get("parent").and_then(Value::as_str).is_some_and(|p| !p.is_empty());
             if let Some(alert) = self.model.alert_for(addr, child, prev.as_deref(), word.as_deref(), looking) {
@@ -2893,6 +2918,23 @@ impl AppWindow {
         let active_ctx = self.model.active_tab().map(|c| c.id.clone());
         match name {
             // ---- spaces
+            "space.popout" | "space.dock" => {
+                let Some(id) = Self::owned(a, "id").or_else(|| self.model.active.clone()) else { return self.fail("no space selected") };
+                let result = if name == "space.popout" { self.open_space_window(&id, window, cx) } else { self.dock_space(&id, window, cx) };
+                self.answer(result);
+                return;
+            }
+            "space.window" => {
+                let Some(id) = Self::arg(a, "id") else { return self.fail("space.window needs id") };
+                let Some(handle) = self.popouts.get(id).copied() else { return self.fail("space is not detached") };
+                let Some(command) = Self::arg(a, "command") else { return self.fail("space.window needs command") };
+                // Queueing avoids borrowing the model owner again from its child.
+                let args = a.get("args").cloned().unwrap_or(Value::Null);
+                let command = command.to_owned();
+                cx.defer(move |cx| { let _ = handle.update(cx, |view, window, cx| { view.run(&command, args, window, cx); }); });
+                self.reply = Some(json!({"queued":true}));
+                return;
+            }
             "space.new" => {
                 let name = Self::arg(a, "name").unwrap_or_default();
                 let r = self.new_space(name, Self::owned(a, "folder"), Self::arg(a, "tab"), Self::argv(a), Self::arg(a, "task"), Self::owned(a, "machine").filter(|m| !m.is_empty()), window);
@@ -2929,7 +2971,11 @@ impl AppWindow {
                     self.model.spaces.get(i.checked_sub(1)?).map(|p| p.id.clone())
                 });
                 match id.filter(|id| self.model.space(id).is_some()) {
-                    Some(id) => self.model.active = Some(id),
+                    Some(id) => {
+                        if let Some(handle) = self.popouts.get(&id) {
+                            let _ = handle.update(cx, |_, window, _| window.activate_window());
+                        } else { self.model.active = Some(id); }
+                    }
                     None => return self.fail("no such space"),
                 }
             }
@@ -3466,6 +3512,7 @@ impl AppWindow {
 
     /// The nearest visible pane, also considering focusable mods for `pane.go`.
     fn neighbor(&self, from: &str, dir: &str, use_history: bool) -> Option<String> {
+        let use_history = use_history && !self.popout_command;
         let bounds = self.bounds.borrow();
         let cur = *bounds.get(from)?;
         let mut candidates: Vec<String> = self.model.active_tab().into_iter()
@@ -3775,6 +3822,14 @@ impl AppWindow {
             return self.run_as(name, args, false, window, cx);
         }
         if let Some(path) = cmd.get("shot").and_then(Value::as_str) {
+            if let Some(space) = cmd.get("space").and_then(Value::as_str) {
+                let Some(handle) = self.popouts.get(space) else { return json!({"error":"space is not detached"}) };
+                return match handle.update(cx, |_, window, _| crate::control::save_shot(window, std::path::Path::new(path))) {
+                    Ok(Ok(())) => json!({"path":path}),
+                    Ok(Err(error)) => json!({"error":format!("cannot save screenshot: {error:#}")}),
+                    Err(error) => json!({"error":error.to_string()}),
+                };
+            }
             return match crate::control::save_shot(window, std::path::Path::new(path)) {
                 Ok(()) => json!({ "path": path }),
                 Err(error) => json!({ "error": format!("cannot save screenshot: {error:#}") }),
@@ -3793,6 +3848,10 @@ impl AppWindow {
             return self.world();
         }
         if cmd.get("status").is_some() {
+            let popout_windows: Vec<_> = self.popouts.iter().filter_map(|(id, handle)| handle.update(cx, |view, window, _| json!({
+                "space":id, "error":view.error, "active":window.is_window_active(),
+                "width":f32::from(window.viewport_size().width), "height":f32::from(window.viewport_size().height),
+            })).ok()).collect();
             let round = |v: f32| (v as f64 * 100.0).round() / 100.0;
             let errors: Vec<String> = ["settings", "keys", "layout", "programs"]
                 .iter()
@@ -3808,6 +3867,8 @@ impl AppWindow {
                 "tab": self.model.active_tab().map(|c| c.id.clone()),
                 "focused_pane": self.focused_pane,
                 "layout": self.layout_name,
+                "popouts": self.popouts.keys().collect::<Vec<_>>(),
+                "popout_windows": popout_windows,
                 "agent": self.shown_agent(),
                 "floats": self.float_status(),
                 "overlays": self.overlays.iter().map(|o| match &o.layout {
@@ -3856,7 +3917,7 @@ impl AppWindow {
                         json!({ "id": c.id, "name": Model::tab_name(p, c), "active": Some(&c.id) == active.as_ref(), "settled": c.settled.is_some(), "terminals": terms })
                     })
                     .collect();
-                json!({ "id": p.id, "name": m.space_name(p, &home()), "folder": p.folder, "machine": p.machine, "active": m.active.as_deref() == Some(&p.id), "tabs": tabs })
+                json!({ "id": p.id, "name": m.space_name(p, &home()), "folder": p.folder, "machine": p.machine, "active": m.active.as_deref() == Some(&p.id), "detached": self.popouts.contains_key(&p.id), "tabs": tabs })
             })
             .collect();
         json!({ "spaces": spaces, "recent": m.recent })
@@ -3908,7 +3969,7 @@ impl AppWindow {
             // Tell mods now: render publishes window() too, but a mod it refreshes
             // waits for another frame, which an idle window that just lost focus
             // may not draw for a long time.
-            if mods::publish_window(self.window_json(window)) {
+            if self.mod_snapshot.publish_window(self.window_json(window)) {
                 self.refresh_snapshot_mods(cx);
             }
         }
@@ -4131,12 +4192,7 @@ impl AppWindow {
                             if this.focused_pane.as_deref() != Some(id.as_str())
                                 && (this.model.tab_of(&id).is_some() || terminal_block(&this.chrome, Some(&id)).is_some())
                             {
-                                this.model.focus_pane(&id);
-                                this.focused_pane = Some(id.clone());
-                                this.synced_model_pane = this.model.focused_pane();
-                                this.publish(cx);
-                                this.save();
-                                cx.notify();
+                                this.focus_owned_pane(&id, cx);
                             }
                         }))
                         .child(shown_terminal(&t.view, cx))
@@ -4159,7 +4215,7 @@ impl AppWindow {
                     .child("no agents yet. start claude, codex or pi in a terminal")
                     .into_any_element(),
             },
-            Content::Context { .. } => match self.model.active_tab() {
+            Content::Context { .. } => match self.model.active_tab().filter(|_| self.model.active.as_ref().is_none_or(|id| !self.popouts.contains_key(id))) {
                 Some(c) => self.render_node(c.shown(), focused, self.pane_frame(), cx),
                 None if self.documents.get("").is_some_and(|s| s.layout() == "loading") => div().size_full().into_any_element(),
                 None => {
@@ -4170,7 +4226,11 @@ impl AppWindow {
                         .items_center()
                         .justify_center()
                         .text_color(c("dim"))
-                        .child(format!("No space open. Make one{}.", key.unwrap_or_default()))
+                        .child(if self.popouts.is_empty() {
+                            format!("No space open. Make one{}.", key.unwrap_or_default())
+                        } else {
+                            "Your spaces are open in separate windows. Select a space to raise its window.".into()
+                        })
                         .into_any_element()
                 }
             },
@@ -4926,7 +4986,7 @@ impl Render for AppWindow {
         }
         self.tick_floats(window);
         self.apply_titlebar(window);
-        if mods::publish_window(self.window_json(window)) {
+        if self.mod_snapshot.publish_window(self.window_json(window)) {
             self.refresh_snapshot_mods(cx);
         }
         let focused = self.focused_path(window, cx);
@@ -5655,6 +5715,53 @@ mod tests {
         let (view, cx) = cx.add_window_view(|window, cx| super::AppWindow::new(crate::hc::offline(), requests, window, cx));
         assert_eq!(view.update(cx, |this, _| this.layout_name.clone()), "test");
         (view, cx)
+    }
+
+    #[test]
+    fn native_popouts_share_the_model_and_existing_terminal_entities() {
+        in_own_process("native_popout_lifecycle");
+    }
+
+    #[gpui::test]
+    fn native_popout_lifecycle(cx: &mut gpui::TestAppContext) {
+        use serde_json::{Value, json};
+        if !running_alone("native_popout_lifecycle") { return; }
+        let (view, cx) = open_window(cx, "unused", "", json!({
+            "id":"root", "type":"block", "content":{"tab":"active"}
+        }));
+        let (child, terminals) = cx.update(|window, cx| view.update(cx, |owner, cx| {
+            owner.model.add_space("main", "Main", "/tmp", crate::model::Tab::new("a", "A", "p1", "t1"));
+            owner.model.add_space("child", "Child", "/tmp", crate::model::Tab::new("b", "B", "p2", "t2"));
+            owner.model.add_tab("child", crate::model::Tab::new("c", "C", "p3", "t3"));
+            owner.model.active = Some("main".into());
+            owner.sync(window, cx);
+            let terminals: Vec<_> = ["p1", "p2", "p3"].map(|p| owner.terms[p].view.entity_id()).into();
+            assert_eq!(owner.open_space_window("child", window, cx).unwrap()["detached"], true);
+            let child = owner.popouts["child"];
+            owner.open_space_window("child", window, cx).unwrap();
+            assert_eq!(owner.popouts.len(), 1);
+            (child, terminals)
+        }));
+        cx.run_until_parked();
+        child.update(cx, |child, window, cx| {
+            assert!(child.run("tab.select", json!({"id":"b"}), window, cx).get("error").is_none());
+            assert!(child.run("tab.select", json!({"id":"a"}), window, cx).get("error").is_some());
+            assert!(child.run("pane.focus:p1", Value::Null, window, cx).get("error").is_some());
+        }).unwrap();
+        cx.run_until_parked();
+        view.update(cx, |owner, _| {
+            assert_eq!(owner.model.active.as_deref(), Some("main"));
+            assert_eq!(owner.model.space("child").unwrap().active.as_deref(), Some("b"));
+            assert_eq!(["p1", "p2", "p3"].map(|p| owner.terms[p].view.entity_id()).to_vec(), terminals);
+        });
+        child.update(cx, |child, window, cx| { child.run("window.close", Value::Null, window, cx); }).unwrap();
+        cx.run_until_parked();
+        view.update(cx, |owner, _| {
+            assert!(owner.popouts.is_empty());
+            assert_eq!(owner.model.active.as_deref(), Some("child"));
+            assert_eq!(owner.model.space("child").unwrap().tabs.len(), 2);
+            assert_eq!(["p1", "p2", "p3"].map(|p| owner.terms[p].view.entity_id()).to_vec(), terminals);
+        });
     }
 
     #[test]

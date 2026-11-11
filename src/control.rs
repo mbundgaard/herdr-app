@@ -76,7 +76,7 @@ pub fn client(args: &[String]) -> i32 {
         return 0;
     }
     let cmd = match args {
-        [verb, rest @ ..] if verb == "shot" && rest.len() <= 1 => {
+        [verb, rest @ ..] if verb == "shot" && rest.len() <= 2 => {
             let path = PathBuf::from(rest.first().map(String::as_str).unwrap_or("herdr-shot.png"));
             let path = match std::path::absolute(path) {
                 Ok(path) => path,
@@ -85,7 +85,7 @@ pub fn client(args: &[String]) -> i32 {
             if path.extension().is_none_or(|ext| !ext.eq_ignore_ascii_case("png")) {
                 return fail("screenshot path must end in .png");
             }
-            json!({ "shot": path })
+            json!({ "shot": path, "space": rest.get(1) })
         },
         [verb] if verb == "status" => json!({ "status": true }),
         [verb] if verb == "ls" => json!({ "ls": true }),
@@ -94,7 +94,7 @@ pub fn client(args: &[String]) -> i32 {
             Ok(a) => json!({ "do": command, "args": a }),
             Err(e) => return fail(&e),
         },
-        _ => return fail("usage: herdr-app ls | herdr-app commands | herdr-app status | herdr-app shot [file.png] | herdr-app do <command> [--arg value ... | json]"),
+        _ => return fail("usage: herdr-app ls | herdr-app commands | herdr-app status | herdr-app shot [file.png] [space-id] | herdr-app do <command> [--arg value ... | json]"),
     };
     let mut stream = match UnixStream::connect(socket()) {
         Ok(s) => s,

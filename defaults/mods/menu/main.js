@@ -63,6 +63,8 @@ function items(p, git) {
     case "space":
       return [
         ["Rename", "space.rename", { id: tg.id }],
+        ["Open in new window", "space.popout", { id: tg.id }],
+        ...(spaces().find((s) => s.id === tg.id)?.detached ? [["Return to main window", "space.dock", { id: tg.id }]] : []),
         ...(git ? [["New worktree", "worktree", { space: tg.id, action: "new" }], ["Open worktree", "worktree", { space: tg.id, action: "open" }]] : []),
         ...(git === "linked" ? [["Remove worktree", "worktree", { space: tg.id, action: "remove" }]] : []),
         ["Close", "space.close", { id: tg.id }],
