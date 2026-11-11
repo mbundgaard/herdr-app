@@ -14,7 +14,7 @@ Read [the Windows build handoff](windows-build.md) and [fork maintenance policy]
 
 **Initial scope is terminal-only:** all tabs must contain terminal panes or row/column splits. Agents running inside those terminals are retained as the same processes, not re-created. Mod/layout panes, stacks, and floating blocks are rejected before detach. Adding an unsupported pane through main while detached safely returns the whole space to main. Custom chrome, Files/Changes panels, pane drag/reordering, destructive tab/pane shortcuts, and arbitrary main-window actions are not supported inside the child; unsupported commands report an error instead of falling through to main.
 
-This needs the modified executable. It is not a stock-Herdr plugin. A layout/mod cannot create a native OS window through the original API. The owner authorized independent fork development without Can's approval; the fork's `AGENTS.md` records that exception. Do not submit upstream work unless asked.
+This needs the modified executable. It is not a stock-Herdr plugin. A layout/mod cannot create a native OS window through the original API. The owner authorized independent fork development without Can's approval; [the fork's agent instructions](AGENTS.md) record that exception; root `AGENTS.md` remains unchanged from upstream. Do not submit upstream work unless asked.
 
 ## Ownership and implementation
 
@@ -81,7 +81,7 @@ The entire Bun suite is **not green on this Windows host**. Unmodified baseline 
 
 ## Continue safely
 
-1. Inspect this repository's status and read fork instructions. Inspect HerdrConfig only when working on optional Focus integration, preserving unrelated edits. Do not reclone or rebuild over a working baseline.
+1. Read every Markdown file in `docs/fork/` and inspect this repository's status. Inspect HerdrConfig only when working on optional Focus integration, preserving unrelated edits. Do not reclone or rebuild over a working baseline.
 2. Use separate target output and fresh `HERDR_APP_HOME`, `XDG_STATE_HOME`, `XDG_CONFIG_HOME`, `HC_SESSION`; remove inherited socket/terminal/scope selectors. A separate app home alone does not isolate the core.
 3. Local helpers are `popout-tests.cmd`, `run.py`, and `popout-smoke.py` (`--focus` adds disposable Focus coverage). Use a proper CPython installation: PATH currently selects MySQL's embedded Python, which fails ctypes. Python 3.13 worked. These helpers are not shipped here.
 4. Address remaining UI/remote/platform acceptance without faking input on the real display or touching production terminals. Preserve one model/document owner and terminal process identity.

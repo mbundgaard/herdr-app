@@ -16,7 +16,7 @@ These are historical results, not claims about a newly checked-out revision or c
 
 ## Prerequisites and build
 
-Read root `AGENTS.md`, optional `AGENTS.local.md`, `CONTRIBUTING.md`, `README.md`, `justfile`, CI, and relevant scripts before building. Inspect the checkout and installed tools before changing anything. For a new checkout:
+Read every Markdown file in `docs/fork/`, including [our agent instructions](AGENTS.md), then root `AGENTS.md`, optional `AGENTS.local.md`, `CONTRIBUTING.md`, `README.md`, `justfile`, CI, and relevant scripts before building. Root documents are upstream guidance; fork authority and release overrides live here. Root installation commands install upstream builds. Inspect the checkout and installed tools before changing anything. For a new checkout:
 
 ```text
 git clone --recurse-submodules https://github.com/mbundgaard/herdr-app.git HerdrApp

@@ -1,11 +1,28 @@
-# Owner fork maintenance
+# Herdr desktop — owner fork
 
-This repository, <https://github.com/mbundgaard/herdr-app>, is the authoritative home for the owner's Herdr desktop source, tests, build/release automation, and development notes. Start the coding agent here and read the root `AGENTS.md` (and `AGENTS.local.md` if present).
+This repository, <https://github.com/mbundgaard/herdr-app>, is the authoritative home for the owner's Herdr desktop source, tests, build/release automation, and development notes. Herdr is a native GPUI desktop client for terminals and coding agents, backed by the separate upstream herdr-core project.
 
+## Start here after cloning
+
+Tell the coding agent: **Read every Markdown file in `docs/fork/` before working.** This folder contains the fork-specific instructions and handoff; no root-level pointer is required.
+
+- [Agent instructions and upstream authority overrides](AGENTS.md)
 - [Windows build and isolation](windows-build.md)
 - [Native space pop-outs: implementation and evidence](space-popouts.md)
 
 [HerdrConfig](https://github.com/mbundgaard/herdr-config) separately owns Focus, host configuration, and Pi/router policy. It is not required to build or maintain the app. Optional Focus integration testing needs its package.
+
+## What differs from upstream
+
+Native terminal-space pop-outs are implemented in the recorded `feature/space-popout` checkpoint. They preserve existing terminals while displaying a space in its own native window. See the feature note for supported actions, limitations and historical Windows test evidence; inspect the current checkout rather than assuming a branch contains that checkpoint.
+
+Owner release/update distribution is not implemented yet. No packaged owner release is claimed. Use the build guidance in this folder for this fork; the unchanged root README's installation commands install **upstream**, not our builds.
+
+For general Herdr usage, see the [upstream README](https://github.com/herdrdev/herdr-app/blob/master/README.md) and [upstream project](https://github.com/herdrdev/herdr-app). The root README and AGENTS files are retained from the selected upstream baseline, not maintained as fork introductions.
+
+## Documentation boundary
+
+All fork-specific narrative documentation and instructions belong in `docs/fork/`. Keep root documentation and other non-functional files clean against the selected upstream baseline, without fork notices or pointers. Necessary source, test and shipped/generated API documentation changes stay with the functionality they describe; see [agent instructions](AGENTS.md) for the precise boundary. Keep this folder complete enough to hand off a fresh clone without a sibling repository or private notes.
 
 ## Maintenance policy
 
