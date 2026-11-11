@@ -6,17 +6,34 @@ maintains it.
 
 If AGENTS.local.md exists, read it too: the maintainer's local rules.
 
-## Owner fork: space pop-out development
+## Owner fork
 
-This checkout is the owner's `mbundgaard/herdr-app` fork. The owner has
-explicitly authorized independent desktop-only space pop-out development;
-Can's approval is not a prerequisite for this fork-only work. Keep the
-architectural questions below, but use the owner's approval for this scope.
-Do not open upstream issues/PRs or plan an upstream merge unless asked.
-Leave herdr-core source, installed binaries, and existing core sessions alone.
-Keep the working desktop running while developing; use a separate build
-output directory and disposable app/core state for tests. The upstream
-contribution/release rules below apply only when contributing upstream.
+This checkout is the owner's `mbundgaard/herdr-app` fork and the authoritative
+home for desktop development, tests, build/release automation, and notes.
+Read [docs/fork/README.md](docs/fork/README.md) for maintenance/release policy,
+[Windows build guidance](docs/fork/windows-build.md), and
+[pop-out implementation/evidence](docs/fork/space-popouts.md).
+HerdrConfig separately owns Focus and host/Pi configuration; it is not a
+required sibling checkout for app development.
+
+The owner authorizes independent desktop fork development. Keep the
+architectural questions below, but use owner approval for fork-only work;
+Can's approval and upstream contribution/release rules apply to upstream
+submissions, not maintenance of this fork. Do not submit upstream issues/PRs
+or push upstream unless asked. Integrating selected upstream releases into
+our fork is distinct from submitting our changes upstream.
+
+Minimize divergence and retain the selected upstream version number without
+a fork suffix. Maintain one release stream; initially one immutable owner
+release per upstream version, not replacement builds under the same version.
+Desktop updates should use owner releases while official core updates remain
+independent. This updater/publishing work is planned, not yet implemented.
+
+Leave herdr-core source, installed binaries, and existing core sessions alone
+during development. Keep the working desktop running; use separate build
+output and disposable app/core state for experiments. Daily use may share the
+normal profile/core with only one desktop at a time. Keep host-specific state,
+credentials, logs, and helpers outside Git.
 
 ## Compatibility
 

@@ -2,6 +2,8 @@
 
 Herdr is a desktop app for terminals and coding agents. Keep work in spaces, see which agents need you, and leave terminals running when you close the window.
 
+> **Owner fork:** Development and release policy lives in [docs/fork/README.md](docs/fork/README.md). Native space pop-outs are implemented on `feature/space-popout`; owner release/update distribution is still pending. The installation instructions below are upstream instructions and install upstream builds, not this fork.
+
 ## Install
 
 ### Linux and macOS
